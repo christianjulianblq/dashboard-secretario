@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dashboard — Trámites DIE</title>
+
+  <!-- CSS básico + DataTables -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css"/>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 18px; background:#f6f8fb; color:#0f172a; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+    header h1 { margin:0; font-size:20px; color:#0b5cff; }
+    .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .card { background:white; border-radius:8px; box-shadow:0 6px 18px rgba(15,23,42,0.06); padding:14px; }
+    .row { display:flex; gap:12px; margin-bottom:12px; }
+    #charts { display:flex; gap:12px; flex-wrap:wrap; }
+    #chartStatus, #chartArea { flex:1 1 360px; min-height:260px; }
+    #tableWrap { margin-top:12px; }
+    .meta { color:#475569; font-size:13px; }
+    .small { font-size:13px; color:#64748b; }
+    label { font-size:13px; }
+    select, input[type="date"] { padding:6px 8px; border-radius:6px; border:1px solid #e2e8f0; background:white; }
+    button { background:#0b5cff; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    .muted { color:#64748b; font-size:13px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Dashboard Secretaría de Desarrollo Económico — Trámites DIE</h1>
+    <div class="small">Panel ejecutivo — muestra estatus, área, fecha y folio</div>
+  </div>
+  <div class="meta">Última actualización: <span id="lastUpdate">—</span></div>
+</header>
+
+<div class="row">
+  <div class="card controls">
+    <label>Área responsable
+      <select id="filterArea">
+        <option value="">Todas</option>
+      </select>
+    </label>
+
+    <label>Resumen del estatus
+      <select id="filterStatus">
+        <option value="">Todos</option>
+      </select>
+    </label>
+
+    <label>Desde
+      <input type="date" id="filterFrom">
+    </label>
+    <label>Hasta
+      <input type="date" id="filterTo">
+    </label>
+
+    <button id="btnRefresh">Actualizar</button>
+  </div>
+</div>
+
+<div id="charts" class="row">
+  <div id="chartStatus" class="card">
+    <canvas id="pieStatus"></canvas>
+  </div>
+  <div id="chartArea" class="card">
+    <canvas id="barArea"></canvas>
+  </div>
+</div>
+
+<div id="tableWrap" class="card">
+  <table id="recordsTable" class="display" style="width:100%">
+    <thead>
+      <tr>
+        <th>Folio</th>
+        <th>Fecha</th>
+        <th>Área responsable</th>
+        <th>Resumen del estatus</th>
+        <th>Trámite</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- Librerías -->
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<script>
+/* --------------- CONFIG: pega tu token aquí o mejor usa proxy --------------- */
+const AIRTABLE_API_KEY = "TOKEN_AQUI"; // se cargará desde variable privada
+const BASE_ID = "appUO0ktN532Um6iO";
+const TABLE_NAME = "Trámites DIE";
+const PAGE_SIZE = 100; // número de registros a traer por página (Airtable permite hasta 100)
+
+/* -------------------- util: fetch con paginación -------------------- */
+async function fetchAllAirtableRecords() {
+  const records = [];
+  let offset = undefined;
+  const encodedTable = encodeURIComponent(TABLE_NAME);
+
+  do {
+    const params = new URLSearchParams();
+    params.set("pageSize", PAGE_SIZE);
+    if (offset) params.set("offset", offset);
+
+    const url = `https://api.airtable.com/v0/${BASE_ID}/${encodedTable}?${params.toString()}`;
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` }
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error("Error Airtable: " + resp.status + " - " + text);
+    }
+
+    const data = await resp.json();
+    records.push(...data.records);
+    offset = data.offset;
+  } while (offset);
+
+  return records;
+}
+
+/* -------------------- procesar registros -------------------- */
+function parseRecord(rec) {
+  const f = rec.fields || {};
+  // Ajusta si tus campos usan otros nombres exactos
+  return {
+    id: rec.id,
+    Folio: f["Folio"] || "",
+    Fecha: f["Fecha"] || "", // preferible ISO o dd/mm/yyyy según cómo guardes
+    Area: f["Área responsable"] || f["Area responsable"] || f["Área"] || "",
+    Status: f["Resumen del estatus"] || f["Resumen"] || f["Estatus"] || "",
+    Tramite: f["Trámite"] || f["tramite"] || f["Tramite"] || ""
+  };
+}
+
+/* ---------------- UI: DataTable y Charts ---------------- */
+let dataTable = null;
+let pieChart = null;
+let barChart = null;
+
+function formatDateForTable(dateStr) {
+  if (!dateStr) return "";
+  // Airtable a veces da ISO, o dd/mm/yyyy; intenta normalizar
+  const d = new Date(dateStr);
+  if (!isNaN(d)) {
+    return d.toLocaleDateString();
+  }
+  return dateStr;
+}
+
+function populateFilters(data) {
+  const areaSet = new Set();
+  const statusSet = new Set();
+  data.forEach(r => { if (r.Area) areaSet.add(r.Area); if (r.Status) statusSet.add(r.Status); });
+
+  const areaSel = document.getElementById("filterArea");
+  const statusSel = document.getElementById("filterStatus");
+  // limpiar
+  areaSel.innerHTML = '<option value="">Todas</option>';
+  statusSel.innerHTML = '<option value="">Todos</option>';
+
+  Array.from(areaSet).sort().forEach(a => {
+    const opt = document.createElement("option"); opt.value = a; opt.textContent = a; areaSel.appendChild(opt);
+  });
+  Array.from(statusSet).sort().forEach(s => {
+    const opt = document.createElement("option"); opt.value = s; opt.textContent = s; statusSel.appendChild(opt);
+  });
+}
+
+function updateTable(data) {
+  const tbody = $("#recordsTable tbody");
+  tbody.empty();
+  data.forEach(r => {
+    const tr = `<tr>
+      <td>${r.Folio || ""}</td>
+      <td>${formatDateForTable(r.Fecha)}</td>
+      <td>${r.Area || ""}</td>
+      <td>${r.Status || ""}</td>
+      <td>${r.Tramite || ""}</td>
+    </tr>`;
+    tbody.append(tr);
+  });
+
+  if (!dataTable) {
+    dataTable = $("#recordsTable").DataTable({
+      pageLength: 10,
+      lengthChange: false,
+      ordering: true,
+      columns: [
+        { width: "18%" }, { width: "18%" }, { width: "22%" }, { width: "20%" }, { width: "22%" }
+      ]
+    });
+  } else {
+    dataTable.clear();
+    dataTable.rows.add($("#recordsTable tbody tr")).draw();
+  }
+}
+
+function updateCharts(data) {
+  const statusCounts = {};
+  const areaCounts = {};
+
+  data.forEach(r => {
+    const s = r.Status || "Sin estatus";
+    const a = r.Area || "Sin área";
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+    areaCounts[a] = (areaCounts[a] || 0) + 1;
+  });
+
+  const statusLabels = Object.keys(statusCounts);
+  const statusValues = statusLabels.map(l => statusCounts[l]);
+
+  const areaLabels = Object.keys(areaCounts);
+  const areaValues = areaLabels.map(l => areaCounts[l]);
+
+  // Pie (estatus)
+  if (!pieChart) {
+    const ctx = document.getElementById("pieStatus").getContext("2d");
+    pieChart = new Chart(ctx, {
+      type: "pie",
+      data: {
+        labels: statusLabels,
+        datasets: [{ data: statusValues }]
+      },
+      options: { plugins: { legend: { position: 'bottom' } } }
+    });
+  } else {
+    pieChart.data.labels = statusLabels;
+    pieChart.data.datasets[0].data = statusValues;
+    pieChart.update();
+  }
+
+  // Bar (area)
+  if (!barChart) {
+    const ctx2 = document.getElementById("barArea").getContext("2d");
+    barChart = new Chart(ctx2, {
+      type: "bar",
+      data: {
+        labels: areaLabels,
+        datasets: [{ label: "Trámites", data: areaValues }]
+      },
+      options: {
+        indexAxis: 'y',
+        scales: { x: { beginAtZero: true } },
+        plugins: { legend: { display: false } }
+      }
+    });
+  } else {
+    barChart.data.labels = areaLabels;
+    barChart.data.datasets[0].data = areaValues;
+    barChart.update();
+  }
+}
+
+/* -------------------- Filtrado y refresco -------------------- */
+function applyFilters(records) {
+  const area = document.getElementById("filterArea").value;
+  const status = document.getElementById("filterStatus").value;
+  const from = document.getElementById("filterFrom").value;
+  const to = document.getElementById("filterTo").value;
+
+  return records.filter(r => {
+    if (area && r.Area !== area) return false;
+    if (status && r.Status !== status) return false;
+    if (from) {
+      const d = new Date(r.Fecha);
+      if (isNaN(d) || d < new Date(from + "T00:00:00")) return false;
+    }
+    if (to) {
+      const d2 = new Date(r.Fecha);
+      if (isNaN(d2) || d2 > new Date(to + "T23:59:59")) return false;
+    }
+    return true;
+  });
+}
+
+/* -------------------- main: obtener y renderizar -------------------- */
+let cachedRecords = [];
+
+async function refreshAll() {
+  try {
+    document.getElementById("lastUpdate").textContent = "Cargando...";
+    const raw = await fetchAllAirtableRecords();
+    const parsed = raw.map(parseRecord);
+    cachedRecords = parsed;
+
+    // llenar filtros
+    populateFilters(parsed);
+
+    // aplicar filtros
+    const filtered = applyFilters(parsed);
+
+    updateTable(filtered);
+    updateCharts(filtered);
+
+    const now = new Date();
+    document.getElementById("lastUpdate").textContent = now.toLocaleString();
+  } catch (err) {
+    console.error(err);
+    alert("Error al cargar datos: " + err.message);
+    document.getElementById("lastUpdate").textContent = "Error";
+  }
+}
+
+/* -------------------- eventos UI -------------------- */
+document.getElementById("btnRefresh").addEventListener("click", () => refreshAll());
+document.getElementById("filterArea").addEventListener("change", () => {
+  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
+});
+document.getElementById("filterStatus").addEventListener("change", () => {
+  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
+});
+document.getElementById("filterFrom").addEventListener("change", () => {
+  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
+});
+document.getElementById("filterTo").addEventListener("change", () => {
+  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
+});
+
+/* -------------------- auto refresh cada 60s -------------------- */
+refreshAll();
+setInterval(refreshAll, 60000);
+
+</script>
+</body>
+</html>
