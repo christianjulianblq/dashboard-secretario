@@ -90,18 +90,37 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <script>
-/* ------------------ CONFIG: usar proxy en lugar de Airtable directo ------------------ */
+/* --------------- CONFIG: usar proxy Cloudflare --------------- */
 const PROXY_URL = "https://still-tree-0730.julabxus.workers.dev/";
+const BASE_ID = "appUO0ktN532Um6iO";
+const TABLE_NAME = "Trámites DIE";
+const PAGE_SIZE = 100;
 
-/* -------------------- obtener datos desde proxy -------------------- */
+/* -------------------- fetch desde proxy -------------------- */
 async function fetchAllAirtableRecords() {
-  const resp = await fetch(PROXY_URL);
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error("Error al cargar datos: " + resp.status + " - " + text);
-  }
-  const data = await resp.json();
-  return data.records || data; // soporta formato JSON del worker
+  const records = [];
+  let offset = undefined;
+  const encodedTable = encodeURIComponent(TABLE_NAME);
+
+  do {
+    const params = new URLSearchParams();
+    params.set("pageSize", PAGE_SIZE);
+    if (offset) params.set("offset", offset);
+
+    const url = `${PROXY_URL}?base=${BASE_ID}&table=${encodedTable}&${params.toString()}`;
+    const resp = await fetch(url);
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error("Error Proxy: " + resp.status + " - " + text);
+    }
+
+    const data = await resp.json();
+    records.push(...data.records);
+    offset = data.offset;
+  } while (offset);
+
+  return records;
 }
 
 /* -------------------- procesar registros -------------------- */
@@ -117,7 +136,8 @@ function parseRecord(rec) {
   };
 }
 
-/* ---------------- UI: DataTable y Charts ---------------- */
+/* -------------------- resto del dashboard -------------------- */
+// (todo igual que antes)
 let dataTable = null;
 let pieChart = null;
 let barChart = null;
@@ -125,7 +145,8 @@ let barChart = null;
 function formatDateForTable(dateStr) {
   if (!dateStr) return "";
   const d = new Date(dateStr);
-  return !isNaN(d) ? d.toLocaleDateString() : dateStr;
+  if (!isNaN(d)) return d.toLocaleDateString();
+  return dateStr;
 }
 
 function populateFilters(data) {
@@ -151,11 +172,11 @@ function updateTable(data) {
   tbody.empty();
   data.forEach(r => {
     const tr = `<tr>
-      <td>${r.Folio || ""}</td>
+      <td>${r.Folio}</td>
       <td>${formatDateForTable(r.Fecha)}</td>
-      <td>${r.Area || ""}</td>
-      <td>${r.Status || ""}</td>
-      <td>${r.Tramite || ""}</td>
+      <td>${r.Area}</td>
+      <td>${r.Status}</td>
+      <td>${r.Tramite}</td>
     </tr>`;
     tbody.append(tr);
   });
@@ -175,7 +196,6 @@ function updateTable(data) {
 function updateCharts(data) {
   const statusCounts = {};
   const areaCounts = {};
-
   data.forEach(r => {
     const s = r.Status || "Sin estatus";
     const a = r.Area || "Sin área";
@@ -188,11 +208,13 @@ function updateCharts(data) {
   const areaLabels = Object.keys(areaCounts);
   const areaValues = Object.values(areaCounts);
 
+  // Pie (estatus)
   if (!pieChart) {
-    pieChart = new Chart(document.getElementById("pieStatus"), {
+    const ctx = document.getElementById("pieStatus").getContext("2d");
+    pieChart = new Chart(ctx, {
       type: "pie",
       data: { labels: statusLabels, datasets: [{ data: statusValues }] },
-      options: { plugins: { legend: { position: "bottom" } } }
+      options: { plugins: { legend: { position: 'bottom' } } }
     });
   } else {
     pieChart.data.labels = statusLabels;
@@ -200,11 +222,13 @@ function updateCharts(data) {
     pieChart.update();
   }
 
+  // Bar (área)
   if (!barChart) {
-    barChart = new Chart(document.getElementById("barArea"), {
+    const ctx2 = document.getElementById("barArea").getContext("2d");
+    barChart = new Chart(ctx2, {
       type: "bar",
       data: { labels: areaLabels, datasets: [{ label: "Trámites", data: areaValues }] },
-      options: { indexAxis: "y", scales: { x: { beginAtZero: true } }, plugins: { legend: { display: false } } }
+      options: { indexAxis: 'y', plugins: { legend: { display: false } } }
     });
   } else {
     barChart.data.labels = areaLabels;
@@ -213,7 +237,21 @@ function updateCharts(data) {
   }
 }
 
-/* -------------------- main -------------------- */
+function applyFilters(records) {
+  const area = document.getElementById("filterArea").value;
+  const status = document.getElementById("filterStatus").value;
+  const from = document.getElementById("filterFrom").value;
+  const to = document.getElementById("filterTo").value;
+
+  return records.filter(r => {
+    if (area && r.Area !== area) return false;
+    if (status && r.Status !== status) return false;
+    if (from && new Date(r.Fecha) < new Date(from)) return false;
+    if (to && new Date(r.Fecha) > new Date(to)) return false;
+    return true;
+  });
+}
+
 let cachedRecords = [];
 
 async function refreshAll() {
@@ -227,7 +265,6 @@ async function refreshAll() {
     const filtered = applyFilters(parsed);
     updateTable(filtered);
     updateCharts(filtered);
-
     document.getElementById("lastUpdate").textContent = new Date().toLocaleString();
   } catch (err) {
     console.error(err);
@@ -236,33 +273,14 @@ async function refreshAll() {
   }
 }
 
-function applyFilters(records) {
-  const area = document.getElementById("filterArea").value;
-  const status = document.getElementById("filterStatus").value;
-  const from = document.getElementById("filterFrom").value;
-  const to = document.getElementById("filterTo").value;
-
-  return records.filter(r => {
-    if (area && r.Area !== area) return false;
-    if (status && r.Status !== status) return false;
-    if (from) {
-      const d = new Date(r.Fecha);
-      if (isNaN(d) || d < new Date(from)) return false;
-    }
-    if (to) {
-      const d2 = new Date(r.Fecha);
-      if (isNaN(d2) || d2 > new Date(to + "T23:59:59")) return false;
-    }
-    return true;
-  });
-}
-
-/* -------------------- eventos -------------------- */
 document.getElementById("btnRefresh").addEventListener("click", refreshAll);
-document.getElementById("filterArea").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
-document.getElementById("filterStatus").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
-document.getElementById("filterFrom").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
-document.getElementById("filterTo").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
+document.querySelectorAll("#filterArea,#filterStatus,#filterFrom,#filterTo").forEach(el => {
+  el.addEventListener("change", () => {
+    const filtered = applyFilters(cachedRecords);
+    updateTable(filtered);
+    updateCharts(filtered);
+  });
+});
 
 refreshAll();
 setInterval(refreshAll, 60000);
