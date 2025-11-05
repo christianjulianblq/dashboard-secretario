@@ -8,21 +8,81 @@
   <!-- CSS básico + DataTables -->
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css"/>
   <style>
-    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 18px; background:#f6f8fb; color:#0f172a; }
-    header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
-    header h1 { margin:0; font-size:20px; color:#0b5cff; }
+    :root{
+      --bg:#f6f8fb;
+      --card:#ffffff;
+      --muted:#64748b;
+      --accent:#0b5cff;
+      --text:#0f172a;
+    }
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 18px; background:var(--bg); color:var(--text); }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
+    header h1 { margin:0; font-size:20px; color:var(--accent); }
     .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .card { background:white; border-radius:8px; box-shadow:0 6px 18px rgba(15,23,42,0.06); padding:14px; }
-    .row { display:flex; gap:12px; margin-bottom:12px; }
+    .card { background:var(--card); border-radius:8px; box-shadow:0 6px 18px rgba(15,23,42,0.06); padding:14px; }
+    .row { display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
     #charts { display:flex; gap:12px; flex-wrap:wrap; }
     #chartStatus, #chartArea { flex:1 1 360px; min-height:260px; }
-    #tableWrap { margin-top:12px; }
+    #tableWrap { margin-top:12px; overflow-x:auto; }
     .meta { color:#475569; font-size:13px; }
-    .small { font-size:13px; color:#64748b; }
-    label { font-size:13px; }
-    select, input[type="date"] { padding:6px 8px; border-radius:6px; border:1px solid #e2e8f0; background:white; }
-    button { background:#0b5cff; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; }
-    .muted { color:#64748b; font-size:13px; }
+    .small { font-size:13px; color:var(--muted); }
+    label { font-size:13px; display:flex; flex-direction:column; gap:6px; }
+    select, input[type="date"] { padding:6px 8px; border-radius:6px; border:1px solid #e2e8f0; background:white; min-width:160px; }
+    button { background:var(--accent); color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; }
+    .muted { color:var(--muted); font-size:13px; }
+
+    /* Table adjustments */
+    table.dataTable thead th { background: transparent; font-weight:600; }
+    #recordsTable { width:100%; border-collapse: collapse; font-size:14px; }
+    #recordsTable td, #recordsTable th { padding:8px 10px; vertical-align:middle; }
+
+    /* Mobile: transform table into card list */
+    @media (max-width: 800px) {
+      /* hide datatables controls that break layout */
+      .dataTables_wrapper .dataTables_length, 
+      .dataTables_wrapper .dataTables_filter {
+        display:block;
+        width:100%;
+        margin-bottom:8px;
+      }
+
+      /* make charts stacked narrower */
+      #charts { flex-direction:column; }
+      #chartStatus, #chartArea { min-height:220px; }
+
+      /* card-style rows */
+      table.dataTable, table.dataTable thead, table.dataTable tbody, table.dataTable th, table.dataTable td, table.dataTable tr {
+        display: block;
+      }
+      table.dataTable thead tr { position: absolute; top: -9999px; left: -9999px; }
+      table.dataTable tbody tr {
+        border: 1px solid #e6e9ef;
+        margin: 0 0 12px 0;
+        padding:10px;
+        border-radius:8px;
+        background:var(--card);
+      }
+      table.dataTable tbody td {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 10px;
+        border: none;
+      }
+      table.dataTable tbody td:before {
+        content: attr(data-label);
+        font-weight:600;
+        color:var(--muted);
+        margin-right:10px;
+        display:inline-block;
+        width:45%;
+      }
+    }
+
+    /* small screens - reduce paddings */
+    @media (max-width: 420px) {
+      header h1 { font-size:18px; }
+      select, input[type="date"] { min-width:130px; }
+    }
   </style>
 </head>
 <body>
@@ -30,7 +90,7 @@
 <header>
   <div>
     <h1>Dashboard Secretaría de Desarrollo Económico — Trámites DIE</h1>
-    <div class="small">Panel ejecutivo — muestra estatus, área, fecha y folio</div>
+    <div class="small">Panel ejecutivo — muestra estatus, área, fecha, folio, nombre y estatus.</div>
   </div>
   <div class="meta">Última actualización: <span id="lastUpdate">—</span></div>
 </header>
@@ -73,6 +133,8 @@
   <table id="recordsTable" class="display" style="width:100%">
     <thead>
       <tr>
+        <th>Nombre del ciudadano</th>
+        <th>Estatus</th>
         <th>Folio</th>
         <th>Fecha</th>
         <th>Área responsable</th>
@@ -116,7 +178,7 @@ async function fetchAllAirtableRecords() {
     }
 
     const data = await resp.json();
-    records.push(...data.records);
+    records.push(...(data.records || []));
     offset = data.offset;
   } while (offset);
 
@@ -128,6 +190,8 @@ function parseRecord(rec) {
   const f = rec.fields || {};
   return {
     id: rec.id,
+    NombreCiudadano: f["Nombre del ciudadano"] || f["Nombre del Ciudadano"] || f["Nombre"] || "",
+    Estatus: f["Estatus"] || f["Estatus "] || "",
     Folio: f["Folio"] || "",
     Fecha: f["Fecha"] || "",
     Area: f["Área responsable"] || f["Area responsable"] || f["Área"] || "",
@@ -136,8 +200,7 @@ function parseRecord(rec) {
   };
 }
 
-/* -------------------- resto del dashboard -------------------- */
-// (todo igual que antes)
+/* ---------------- UI: DataTable y Charts ---------------- */
 let dataTable = null;
 let pieChart = null;
 let barChart = null;
@@ -171,12 +234,16 @@ function updateTable(data) {
   const tbody = $("#recordsTable tbody");
   tbody.empty();
   data.forEach(r => {
+    // When in mobile (CSS) DataTables expects data-label attributes for each td;
+    // we add data-label dynamically so the mobile card view shows labels.
     const tr = `<tr>
-      <td>${r.Folio}</td>
-      <td>${formatDateForTable(r.Fecha)}</td>
-      <td>${r.Area}</td>
-      <td>${r.Status}</td>
-      <td>${r.Tramite}</td>
+      <td data-label="Nombre">${escapeHtml(r.NombreCiudadano)}</td>
+      <td data-label="Estatus">${escapeHtml(r.Estatus)}</td>
+      <td data-label="Folio">${escapeHtml(r.Folio)}</td>
+      <td data-label="Fecha">${escapeHtml(formatDateForTable(r.Fecha))}</td>
+      <td data-label="Área">${escapeHtml(r.Area)}</td>
+      <td data-label="Resumen">${escapeHtml(r.Status)}</td>
+      <td data-label="Trámite">${escapeHtml(r.Tramite)}</td>
     </tr>`;
     tbody.append(tr);
   });
@@ -185,7 +252,13 @@ function updateTable(data) {
     dataTable = $("#recordsTable").DataTable({
       pageLength: 10,
       lengthChange: false,
-      ordering: true
+      ordering: true,
+      // keep responsive behavior off because we handle it with CSS
+      responsive: false,
+      columnDefs: [
+        { targets: [0,1], width: "18%" },
+        { targets: [2,3,4], width: "15%" }
+      ]
     });
   } else {
     dataTable.clear();
@@ -210,8 +283,7 @@ function updateCharts(data) {
 
   // Pie (estatus)
   if (!pieChart) {
-    const ctx = document.getElementById("pieStatus").getContext("2d");
-    pieChart = new Chart(ctx, {
+    pieChart = new Chart(document.getElementById("pieStatus"), {
       type: "pie",
       data: { labels: statusLabels, datasets: [{ data: statusValues }] },
       options: { plugins: { legend: { position: 'bottom' } } }
@@ -224,8 +296,7 @@ function updateCharts(data) {
 
   // Bar (área)
   if (!barChart) {
-    const ctx2 = document.getElementById("barArea").getContext("2d");
-    barChart = new Chart(ctx2, {
+    barChart = new Chart(document.getElementById("barArea"), {
       type: "bar",
       data: { labels: areaLabels, datasets: [{ label: "Trámites", data: areaValues }] },
       options: { indexAxis: 'y', plugins: { legend: { display: false } } }
@@ -237,6 +308,7 @@ function updateCharts(data) {
   }
 }
 
+/* -------------------- Filtrado y refresco -------------------- */
 function applyFilters(records) {
   const area = document.getElementById("filterArea").value;
   const status = document.getElementById("filterStatus").value;
@@ -254,6 +326,18 @@ function applyFilters(records) {
 
 let cachedRecords = [];
 
+/* -------------------- util -------------------- */
+function escapeHtml(text){
+  if (text === null || text === undefined) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/* -------------------- main -------------------- */
 async function refreshAll() {
   try {
     document.getElementById("lastUpdate").textContent = "Cargando...";
@@ -273,6 +357,7 @@ async function refreshAll() {
   }
 }
 
+/* -------------------- eventos -------------------- */
 document.getElementById("btnRefresh").addEventListener("click", refreshAll);
 document.querySelectorAll("#filterArea,#filterStatus,#filterFrom,#filterTo").forEach(el => {
   el.addEventListener("change", () => {
