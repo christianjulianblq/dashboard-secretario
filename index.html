@@ -90,49 +90,27 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <script>
-/* --------------- CONFIG: pega tu token aquí o mejor usa proxy --------------- */
-const AIRTABLE_API_KEY = "TOKEN_AQUI"; // se cargará desde variable privada
-const BASE_ID = "appUO0ktN532Um6iO";
-const TABLE_NAME = "Trámites DIE";
-const PAGE_SIZE = 100; // número de registros a traer por página (Airtable permite hasta 100)
+/* ------------------ CONFIG: usar proxy en lugar de Airtable directo ------------------ */
+const PROXY_URL = "https://still-tree-0730.julabxus.workers.dev/";
 
-/* -------------------- util: fetch con paginación -------------------- */
+/* -------------------- obtener datos desde proxy -------------------- */
 async function fetchAllAirtableRecords() {
-  const records = [];
-  let offset = undefined;
-  const encodedTable = encodeURIComponent(TABLE_NAME);
-
-  do {
-    const params = new URLSearchParams();
-    params.set("pageSize", PAGE_SIZE);
-    if (offset) params.set("offset", offset);
-
-    const url = `https://api.airtable.com/v0/${BASE_ID}/${encodedTable}?${params.toString()}`;
-    const resp = await fetch(url, {
-      headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` }
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error("Error Airtable: " + resp.status + " - " + text);
-    }
-
-    const data = await resp.json();
-    records.push(...data.records);
-    offset = data.offset;
-  } while (offset);
-
-  return records;
+  const resp = await fetch(PROXY_URL);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error("Error al cargar datos: " + resp.status + " - " + text);
+  }
+  const data = await resp.json();
+  return data.records || data; // soporta formato JSON del worker
 }
 
 /* -------------------- procesar registros -------------------- */
 function parseRecord(rec) {
   const f = rec.fields || {};
-  // Ajusta si tus campos usan otros nombres exactos
   return {
     id: rec.id,
     Folio: f["Folio"] || "",
-    Fecha: f["Fecha"] || "", // preferible ISO o dd/mm/yyyy según cómo guardes
+    Fecha: f["Fecha"] || "",
     Area: f["Área responsable"] || f["Area responsable"] || f["Área"] || "",
     Status: f["Resumen del estatus"] || f["Resumen"] || f["Estatus"] || "",
     Tramite: f["Trámite"] || f["tramite"] || f["Tramite"] || ""
@@ -146,12 +124,8 @@ let barChart = null;
 
 function formatDateForTable(dateStr) {
   if (!dateStr) return "";
-  // Airtable a veces da ISO, o dd/mm/yyyy; intenta normalizar
   const d = new Date(dateStr);
-  if (!isNaN(d)) {
-    return d.toLocaleDateString();
-  }
-  return dateStr;
+  return !isNaN(d) ? d.toLocaleDateString() : dateStr;
 }
 
 function populateFilters(data) {
@@ -161,7 +135,6 @@ function populateFilters(data) {
 
   const areaSel = document.getElementById("filterArea");
   const statusSel = document.getElementById("filterStatus");
-  // limpiar
   areaSel.innerHTML = '<option value="">Todas</option>';
   statusSel.innerHTML = '<option value="">Todos</option>';
 
@@ -191,10 +164,7 @@ function updateTable(data) {
     dataTable = $("#recordsTable").DataTable({
       pageLength: 10,
       lengthChange: false,
-      ordering: true,
-      columns: [
-        { width: "18%" }, { width: "18%" }, { width: "22%" }, { width: "20%" }, { width: "22%" }
-      ]
+      ordering: true
     });
   } else {
     dataTable.clear();
@@ -214,21 +184,15 @@ function updateCharts(data) {
   });
 
   const statusLabels = Object.keys(statusCounts);
-  const statusValues = statusLabels.map(l => statusCounts[l]);
-
+  const statusValues = Object.values(statusCounts);
   const areaLabels = Object.keys(areaCounts);
-  const areaValues = areaLabels.map(l => areaCounts[l]);
+  const areaValues = Object.values(areaCounts);
 
-  // Pie (estatus)
   if (!pieChart) {
-    const ctx = document.getElementById("pieStatus").getContext("2d");
-    pieChart = new Chart(ctx, {
+    pieChart = new Chart(document.getElementById("pieStatus"), {
       type: "pie",
-      data: {
-        labels: statusLabels,
-        datasets: [{ data: statusValues }]
-      },
-      options: { plugins: { legend: { position: 'bottom' } } }
+      data: { labels: statusLabels, datasets: [{ data: statusValues }] },
+      options: { plugins: { legend: { position: "bottom" } } }
     });
   } else {
     pieChart.data.labels = statusLabels;
@@ -236,20 +200,11 @@ function updateCharts(data) {
     pieChart.update();
   }
 
-  // Bar (area)
   if (!barChart) {
-    const ctx2 = document.getElementById("barArea").getContext("2d");
-    barChart = new Chart(ctx2, {
+    barChart = new Chart(document.getElementById("barArea"), {
       type: "bar",
-      data: {
-        labels: areaLabels,
-        datasets: [{ label: "Trámites", data: areaValues }]
-      },
-      options: {
-        indexAxis: 'y',
-        scales: { x: { beginAtZero: true } },
-        plugins: { legend: { display: false } }
-      }
+      data: { labels: areaLabels, datasets: [{ label: "Trámites", data: areaValues }] },
+      options: { indexAxis: "y", scales: { x: { beginAtZero: true } }, plugins: { legend: { display: false } } }
     });
   } else {
     barChart.data.labels = areaLabels;
@@ -258,7 +213,29 @@ function updateCharts(data) {
   }
 }
 
-/* -------------------- Filtrado y refresco -------------------- */
+/* -------------------- main -------------------- */
+let cachedRecords = [];
+
+async function refreshAll() {
+  try {
+    document.getElementById("lastUpdate").textContent = "Cargando...";
+    const raw = await fetchAllAirtableRecords();
+    const parsed = raw.map(parseRecord);
+    cachedRecords = parsed;
+
+    populateFilters(parsed);
+    const filtered = applyFilters(parsed);
+    updateTable(filtered);
+    updateCharts(filtered);
+
+    document.getElementById("lastUpdate").textContent = new Date().toLocaleString();
+  } catch (err) {
+    console.error(err);
+    alert("Error al cargar datos: " + err.message);
+    document.getElementById("lastUpdate").textContent = "Error";
+  }
+}
+
 function applyFilters(records) {
   const area = document.getElementById("filterArea").value;
   const status = document.getElementById("filterStatus").value;
@@ -270,7 +247,7 @@ function applyFilters(records) {
     if (status && r.Status !== status) return false;
     if (from) {
       const d = new Date(r.Fecha);
-      if (isNaN(d) || d < new Date(from + "T00:00:00")) return false;
+      if (isNaN(d) || d < new Date(from)) return false;
     }
     if (to) {
       const d2 = new Date(r.Fecha);
@@ -280,53 +257,15 @@ function applyFilters(records) {
   });
 }
 
-/* -------------------- main: obtener y renderizar -------------------- */
-let cachedRecords = [];
+/* -------------------- eventos -------------------- */
+document.getElementById("btnRefresh").addEventListener("click", refreshAll);
+document.getElementById("filterArea").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
+document.getElementById("filterStatus").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
+document.getElementById("filterFrom").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
+document.getElementById("filterTo").addEventListener("change", () => { const f = applyFilters(cachedRecords); updateTable(f); updateCharts(f); });
 
-async function refreshAll() {
-  try {
-    document.getElementById("lastUpdate").textContent = "Cargando...";
-    const raw = await fetchAllAirtableRecords();
-    const parsed = raw.map(parseRecord);
-    cachedRecords = parsed;
-
-    // llenar filtros
-    populateFilters(parsed);
-
-    // aplicar filtros
-    const filtered = applyFilters(parsed);
-
-    updateTable(filtered);
-    updateCharts(filtered);
-
-    const now = new Date();
-    document.getElementById("lastUpdate").textContent = now.toLocaleString();
-  } catch (err) {
-    console.error(err);
-    alert("Error al cargar datos: " + err.message);
-    document.getElementById("lastUpdate").textContent = "Error";
-  }
-}
-
-/* -------------------- eventos UI -------------------- */
-document.getElementById("btnRefresh").addEventListener("click", () => refreshAll());
-document.getElementById("filterArea").addEventListener("change", () => {
-  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
-});
-document.getElementById("filterStatus").addEventListener("change", () => {
-  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
-});
-document.getElementById("filterFrom").addEventListener("change", () => {
-  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
-});
-document.getElementById("filterTo").addEventListener("change", () => {
-  const filtered = applyFilters(cachedRecords); updateTable(filtered); updateCharts(filtered);
-});
-
-/* -------------------- auto refresh cada 60s -------------------- */
 refreshAll();
 setInterval(refreshAll, 60000);
-
 </script>
 </body>
 </html>
