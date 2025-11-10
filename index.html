@@ -82,7 +82,7 @@
 <header>
   <div>
     <h1>Dashboard Secretaría de Desarrollo Económico — Trámites DIE</h1>
-    <div class="small">Panel ejecutivo — muestra estatus, área, fecha, folio, nombre, comentario y estatus.</div>
+    <div class="small">Panel ejecutivo — muestra estatus, área, fecha, folio, nombre y respuesta del área.</div>
   </div>
   <div class="meta">Última actualización: <span id="lastUpdate">—</span></div>
 </header>
@@ -132,7 +132,7 @@
         <th>Área responsable</th>
         <th>Resumen del estatus</th>
         <th>Trámite</th>
-        <th>Comentario</th>
+        <th>Respuesta del área</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -180,7 +180,7 @@ function parseRecord(rec) {
     Area: f["Área responsable"] || f["Area responsable"] || f["Área"] || "",
     Status: f["Resumen del estatus"] || f["Resumen"] || f["Estatus"] || "",
     Tramite: f["Trámite"] || f["tramite"] || f["Tramite"] || "",
-    Comentario: f["Comentario"] || f["comentario"] || ""
+    RespuestaArea: f["Respuesta del área"] || f["respuesta del área"] || f["Respuesta"] || ""
   };
 }
 
@@ -188,7 +188,6 @@ let dataTable = null;
 let pieChart = null;
 let barChart = null;
 
-/* ✅ Función robusta para evitar "text.replace is not a function" */
 function escapeHtml(text){
   if (text === null || text === undefined) return "";
   const s = String(text);
@@ -230,7 +229,7 @@ function updateTable(data) {
       <td data-label="Área">${escapeHtml(r.Area)}</td>
       <td data-label="Resumen">${escapeHtml(r.Status)}</td>
       <td data-label="Trámite">${escapeHtml(r.Tramite)}</td>
-      <td data-label="Comentario">${escapeHtml(r.Comentario)}</td>
+      <td data-label="Respuesta del área">${escapeHtml(r.RespuestaArea)}</td>
     </tr>`;
     tbody.append(tr);
   });
