@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Dashboard — Trámites DIE</title>
 
-  <!-- CSS básico + DataTables -->
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css"/>
   <style>
     :root{
@@ -31,26 +30,20 @@
     button { background:var(--accent); color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; }
     .muted { color:var(--muted); font-size:13px; }
 
-    /* Table adjustments */
     table.dataTable thead th { background: transparent; font-weight:600; }
     #recordsTable { width:100%; border-collapse: collapse; font-size:14px; }
     #recordsTable td, #recordsTable th { padding:8px 10px; vertical-align:middle; }
 
-    /* Mobile: transform table into card list */
     @media (max-width: 800px) {
-      /* hide datatables controls that break layout */
       .dataTables_wrapper .dataTables_length, 
       .dataTables_wrapper .dataTables_filter {
         display:block;
         width:100%;
         margin-bottom:8px;
       }
-
-      /* make charts stacked narrower */
       #charts { flex-direction:column; }
       #chartStatus, #chartArea { min-height:220px; }
 
-      /* card-style rows */
       table.dataTable, table.dataTable thead, table.dataTable tbody, table.dataTable th, table.dataTable td, table.dataTable tr {
         display: block;
       }
@@ -78,7 +71,6 @@
       }
     }
 
-    /* small screens - reduce paddings */
     @media (max-width: 420px) {
       header h1 { font-size:18px; }
       select, input[type="date"] { min-width:130px; }
@@ -90,7 +82,7 @@
 <header>
   <div>
     <h1>Dashboard Secretaría de Desarrollo Económico — Trámites DIE</h1>
-    <div class="small">Panel ejecutivo — muestra estatus, área, fecha, folio, nombre y estatus.</div>
+    <div class="small">Panel ejecutivo — muestra estatus, área, fecha, folio, nombre, comentario y estatus.</div>
   </div>
   <div class="meta">Última actualización: <span id="lastUpdate">—</span></div>
 </header>
@@ -130,7 +122,7 @@
 </div>
 
 <div id="tableWrap" class="card">
-  <table id="recordsTable" class="display" style="width:100%">
+  <table id="recordsTable" class="display">
     <thead>
       <tr>
         <th>Nombre del ciudadano</th>
@@ -140,43 +132,35 @@
         <th>Área responsable</th>
         <th>Resumen del estatus</th>
         <th>Trámite</th>
+        <th>Comentario</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
 </div>
 
-<!-- Librerías -->
 <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <script>
-/* --------------- CONFIG: usar proxy Cloudflare --------------- */
 const PROXY_URL = "https://still-tree-0730.julabxus.workers.dev/";
 const BASE_ID = "appUO0ktN532Um6iO";
 const TABLE_NAME = "Trámites DIE";
 const PAGE_SIZE = 100;
 
-/* -------------------- fetch desde proxy -------------------- */
 async function fetchAllAirtableRecords() {
   const records = [];
-  let offset = undefined;
+  let offset;
   const encodedTable = encodeURIComponent(TABLE_NAME);
 
   do {
-    const params = new URLSearchParams();
-    params.set("pageSize", PAGE_SIZE);
+    const params = new URLSearchParams({ pageSize: PAGE_SIZE });
     if (offset) params.set("offset", offset);
 
     const url = `${PROXY_URL}?base=${BASE_ID}&table=${encodedTable}&${params.toString()}`;
     const resp = await fetch(url);
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error("Error Proxy: " + resp.status + " - " + text);
-    }
-
+    if (!resp.ok) throw new Error("Error Proxy: " + resp.status);
     const data = await resp.json();
     records.push(...(data.records || []));
     offset = data.offset;
@@ -185,31 +169,36 @@ async function fetchAllAirtableRecords() {
   return records;
 }
 
-/* -------------------- procesar registros -------------------- */
 function parseRecord(rec) {
   const f = rec.fields || {};
   return {
     id: rec.id,
     NombreCiudadano: f["Nombre del ciudadano"] || f["Nombre del Ciudadano"] || f["Nombre"] || "",
-    Estatus: f["Estatus"] || f["Estatus "] || "",
+    Estatus: f["Estatus"] || "",
     Folio: f["Folio"] || "",
     Fecha: f["Fecha"] || "",
     Area: f["Área responsable"] || f["Area responsable"] || f["Área"] || "",
     Status: f["Resumen del estatus"] || f["Resumen"] || f["Estatus"] || "",
-    Tramite: f["Trámite"] || f["tramite"] || f["Tramite"] || ""
+    Tramite: f["Trámite"] || f["tramite"] || f["Tramite"] || "",
+    Comentario: f["Comentario"] || f["comentario"] || ""
   };
 }
 
-/* ---------------- UI: DataTable y Charts ---------------- */
 let dataTable = null;
 let pieChart = null;
 let barChart = null;
 
+function escapeHtml(text){
+  if (!text) return "";
+  return text.replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'
+  }[m]));
+}
+
 function formatDateForTable(dateStr) {
   if (!dateStr) return "";
   const d = new Date(dateStr);
-  if (!isNaN(d)) return d.toLocaleDateString();
-  return dateStr;
+  return !isNaN(d) ? d.toLocaleDateString() : dateStr;
 }
 
 function populateFilters(data) {
@@ -221,21 +210,14 @@ function populateFilters(data) {
   const statusSel = document.getElementById("filterStatus");
   areaSel.innerHTML = '<option value="">Todas</option>';
   statusSel.innerHTML = '<option value="">Todos</option>';
-
-  Array.from(areaSet).sort().forEach(a => {
-    const opt = document.createElement("option"); opt.value = a; opt.textContent = a; areaSel.appendChild(opt);
-  });
-  Array.from(statusSet).sort().forEach(s => {
-    const opt = document.createElement("option"); opt.value = s; opt.textContent = s; statusSel.appendChild(opt);
-  });
+  Array.from(areaSet).sort().forEach(a => areaSel.innerHTML += `<option value="${a}">${a}</option>`);
+  Array.from(statusSet).sort().forEach(s => statusSel.innerHTML += `<option value="${s}">${s}</option>`);
 }
 
 function updateTable(data) {
   const tbody = $("#recordsTable tbody");
   tbody.empty();
   data.forEach(r => {
-    // When in mobile (CSS) DataTables expects data-label attributes for each td;
-    // we add data-label dynamically so the mobile card view shows labels.
     const tr = `<tr>
       <td data-label="Nombre">${escapeHtml(r.NombreCiudadano)}</td>
       <td data-label="Estatus">${escapeHtml(r.Estatus)}</td>
@@ -244,6 +226,7 @@ function updateTable(data) {
       <td data-label="Área">${escapeHtml(r.Area)}</td>
       <td data-label="Resumen">${escapeHtml(r.Status)}</td>
       <td data-label="Trámite">${escapeHtml(r.Tramite)}</td>
+      <td data-label="Comentario">${escapeHtml(r.Comentario)}</td>
     </tr>`;
     tbody.append(tr);
   });
@@ -253,12 +236,7 @@ function updateTable(data) {
       pageLength: 10,
       lengthChange: false,
       ordering: true,
-      // keep responsive behavior off because we handle it with CSS
-      responsive: false,
-      columnDefs: [
-        { targets: [0,1], width: "18%" },
-        { targets: [2,3,4], width: "15%" }
-      ]
+      responsive: false
     });
   } else {
     dataTable.clear();
@@ -281,7 +259,6 @@ function updateCharts(data) {
   const areaLabels = Object.keys(areaCounts);
   const areaValues = Object.values(areaCounts);
 
-  // Pie (estatus)
   if (!pieChart) {
     pieChart = new Chart(document.getElementById("pieStatus"), {
       type: "pie",
@@ -294,7 +271,6 @@ function updateCharts(data) {
     pieChart.update();
   }
 
-  // Bar (área)
   if (!barChart) {
     barChart = new Chart(document.getElementById("barArea"), {
       type: "bar",
@@ -308,7 +284,6 @@ function updateCharts(data) {
   }
 }
 
-/* -------------------- Filtrado y refresco -------------------- */
 function applyFilters(records) {
   const area = document.getElementById("filterArea").value;
   const status = document.getElementById("filterStatus").value;
@@ -326,25 +301,12 @@ function applyFilters(records) {
 
 let cachedRecords = [];
 
-/* -------------------- util -------------------- */
-function escapeHtml(text){
-  if (text === null || text === undefined) return "";
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-/* -------------------- main -------------------- */
 async function refreshAll() {
   try {
     document.getElementById("lastUpdate").textContent = "Cargando...";
     const raw = await fetchAllAirtableRecords();
     const parsed = raw.map(parseRecord);
     cachedRecords = parsed;
-
     populateFilters(parsed);
     const filtered = applyFilters(parsed);
     updateTable(filtered);
@@ -357,7 +319,6 @@ async function refreshAll() {
   }
 }
 
-/* -------------------- eventos -------------------- */
 document.getElementById("btnRefresh").addEventListener("click", refreshAll);
 document.querySelectorAll("#filterArea,#filterStatus,#filterFrom,#filterTo").forEach(el => {
   el.addEventListener("change", () => {
