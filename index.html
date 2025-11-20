@@ -1,3 +1,4 @@
+<!-- Inserta aquí tu archivo HTML completo del dashboard y yo lo modificaré para agregar el número de contacto con enlaces a WhatsApp y llamada -->
 <!doctype html>
 <html lang="es">
 <head>
@@ -133,6 +134,7 @@
         <th>Resumen del estatus</th>
         <th>Trámite</th>
         <th>Respuesta del área</th>
+        <th>Contacto</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -180,8 +182,8 @@ function parseRecord(rec) {
     Area: f["Área responsable"] || f["Area responsable"] || f["Área"] || "",
     Status: f["Resumen del estatus"] || f["Resumen"] || f["Estatus"] || "",
     Tramite: f["Trámite"] || f["tramite"] || f["Tramite"] || "",
-    RespuestaArea: f["Respuesta del área"] || f["respuesta del área"] || f["Respuesta"] || ""
-  };
+    RespuestaArea: f["Respuesta del área"] || f["respuesta del área"] || f["Respuesta"] || "",
+    Telefono: f["Teléfono"] || f["telefono"] || f["Tel"] || ""};
 }
 
 let dataTable = null;
@@ -230,6 +232,7 @@ function updateTable(data) {
       <td data-label="Resumen">${escapeHtml(r.Status)}</td>
       <td data-label="Trámite">${escapeHtml(r.Tramite)}</td>
       <td data-label="Respuesta del área">${escapeHtml(r.RespuestaArea)}</td>
+      <td data-label="Contacto">${r.Telefono ? `<a href=\"https://wa.me/52${r.Telefono.replace(/[^0-9]/g,'')}\" target=\"_blank\">WhatsApp</a> | <a href=\"tel:${r.Telefono.replace(/[^0-9]/g,'')}\">Llamar</a>` : ''}</td>
     </tr>`;
     tbody.append(tr);
   });
